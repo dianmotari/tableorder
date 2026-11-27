@@ -75,13 +75,19 @@ def _pg_connect():
         from psycopg_pool import ConnectionPool
 
         # check=... is the pool "pre-ping": it validates a connection before
-        # handing it out, so dropped cloud DB connections are recycled (this is
-        # the psycopg equivalent of SQLAlchemy's pool_pre_ping=True).
+        # handing it out, so dropped cloud DB connections are recycled (the
+        # psycopg equivalent of SQLAlchemy's pool_pre_ping=True).
+        # max_lifetime/max_idle recycle long-lived connections (cloud DBs and
+        # pgbouncer drop idle ones). prepare_threshold=None disables prepared
+        # statements so transaction-mode poolers (Render/Neon/pgbouncer) work.
         _pg_pool = ConnectionPool(
             _pg_dsn(),
             min_size=1,
             max_size=5,
+            max_lifetime=300,
+            max_idle=60,
             check=ConnectionPool.check_connection,
+            kwargs={"prepare_threshold": None},
         )
     return _pg_pool.getconn()
 
