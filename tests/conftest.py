@@ -13,6 +13,8 @@ from app import db, schema
 _WIPE = [
     "order_items",
     "orders",
+    "table_messages",
+    "table_session_members",
     "assignments",
     "table_sessions",
     "waiters",
@@ -22,6 +24,7 @@ _WIPE = [
     "menu_items",
     "categories",
     "tables",
+    "customers",
     "users",
 ]
 

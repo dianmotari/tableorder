@@ -20,7 +20,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from . import auth, db, schema
 from .config import settings
-from .routers import admin, customer, menu, orders, tables, waiter
+from .routers import admin, customer, menu, orders, table_session, tables, waiter
 
 
 def _bootstrap_admin():
@@ -64,6 +64,7 @@ app.include_router(tables.router)
 app.include_router(menu.router)
 app.include_router(customer.router)
 app.include_router(orders.router)
+app.include_router(table_session.router)
 app.include_router(waiter.router)
 
 # Serve uploaded menu photos (and future static assets) at /static.

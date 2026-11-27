@@ -13,10 +13,14 @@
   .muted { color:#6b7280; font-size:13px; }
   button { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#fff; cursor:pointer; }
   button.primary { background:#0f766e; color:#fff; border-color:#0f766e; }
+  button.small { padding:4px 8px; font-size:13px; }
   input { padding:8px; border-radius:8px; border:1px solid #d1d5db; width:100%; box-sizing:border-box; }
   .item { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #eee; }
   .qty { display:flex; gap:6px; align-items:center; }
   .badge { padding:2px 8px; border-radius:999px; font-size:12px; background:#e5e7eb; }
+  .hero { background:#ecfeff; border:1px solid #a5f3fc; border-radius:10px; padding:14px; margin-bottom:12px; font-size:16px; }
+  .chat { max-height:180px; overflow:auto; }
+  .chat .bubble { background:#f1f5f9; border-radius:8px; padding:6px 8px; margin:4px 0; font-size:14px; }
 </style>
 </head>
 <body>
@@ -24,140 +28,218 @@
 <main id="app"></main>
 
 <script>
-// Tiny helpers
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token') || '';
-let cart = {};        // menu_item_id -> qty
-let tableId = null;
+let cart = {}, tableId = null, me = {}, state = null;
+let pollTimer = null, stateTimer = null, waitTimer = null;
 
-function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
+function el(html){ const d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; }
+async function readError(r){ try { const j=await r.json(); return j.detail||JSON.stringify(j); } catch(e){ try { return await r.text(); } catch(_){ return 'Request failed'; } } }
+async function api(path, method='GET', body){
+  const opt={method,headers:{}}; if(body){ opt.headers['Content-Type']='application/json'; opt.body=JSON.stringify(body); }
+  const r=await fetch(path,opt); if(!r.ok){ throw new Error(await readError(r)); } return r.status===204?null:r.json();
+}
+function stopTimers(){ [pollTimer,stateTimer,waitTimer].forEach(t=>{ if(t) clearInterval(t); }); pollTimer=stateTimer=waitTimer=null; }
 
-// 1) Validate the table token.
-async function loadTable() {
-  const r = await fetch('/t/' + token);
-  if (!r.ok) { $('app').innerHTML = '<div class="card">This table code is not valid.</div>'; return false; }
-  const t = await r.json();
-  tableId = t.table_id;
-  $('title').textContent = t.table_name + ' — Order';
-  return true;
+// Greeting by local time of day.
+function greeting(name){
+  const h=new Date().getHours(); const first=(name||'there').trim().split(/\s+/)[0];
+  if(h>=5&&h<12) return `Good morning, ${first}! Are you ready for breakfast?`;
+  if(h>=12&&h<17) return `Good afternoon, ${first}! What would you like for lunch?`;
+  if(h>=17&&h<23) return `Good evening, ${first}! Are you ready for dinner?`;
+  return `Late night cravings, ${first}? What would you like to eat?`;
 }
 
-// 2) Sign in (email OTP) if needed.
-let pollTimer = null;
-function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
-async function readError(r){
-  // Never call r.json() blindly: a 500 may return plain text ("Internal Server Error").
-  try { const j = await r.json(); return j.detail || JSON.stringify(j); }
-  catch(e){ try { return await r.text(); } catch(_){ return 'Request failed'; } }
+// 1) Validate table token.
+async function loadTable(){
+  const r=await fetch('/t/'+token);
+  if(!r.ok){ $('app').innerHTML='<div class="card">This table code is not valid.</div>'; return false; }
+  const t=await r.json(); tableId=t.table_id; $('title').textContent=t.table_name+' — Order'; return true;
 }
-async function signedIn() {
-  const r = await fetch('/customer/me');
-  return r.ok;
-}
-function showAuth() {
-  $('app').innerHTML = `
+
+// 2) Auth (email OTP).
+async function signedIn(){ const r=await fetch('/customer/me'); return r.ok; }
+function showAuth(){
+  $('app').innerHTML=`
     <div class="card">
       <h2>Sign in to order</h2>
-      <div id="step1">
-        <input id="email" placeholder="Your email">
-        <button class="primary" style="margin-top:8px" onclick="requestOtp()">Send code</button>
-      </div>
+      <div id="step1"><input id="email" placeholder="Your email">
+        <button class="primary" style="margin-top:8px" onclick="requestOtp()">Send code</button></div>
       <div id="step2" style="display:none;margin-top:10px">
         <div class="muted">Enter the 6-digit code sent to your email.</div>
         <input id="code" placeholder="6-digit code">
-        <button class="primary" style="margin-top:8px" onclick="verifyOtp()">Verify</button>
-      </div>
-      <div id="authErr" class="muted" style="color:#ef4444"></div>
+        <button class="primary" style="margin-top:8px" onclick="verifyOtp()">Verify</button></div>
+      <div id="authErr" style="color:#ef4444"></div>
     </div>`;
 }
-async function requestOtp() {
-  const email = $('email').value.trim();
-  const r = await fetch('/customer/request-otp', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({email})});
-  if (r.ok) { $('step1').style.display='none'; $('step2').style.display='block'; }
-  else { $('authErr').textContent = await readError(r); }
+async function requestOtp(){
+  const email=$('email').value.trim();
+  const r=await fetch('/customer/request-otp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});
+  if(r.ok){ $('step1').style.display='none'; $('step2').style.display='block'; } else $('authErr').textContent=await readError(r);
 }
-async function verifyOtp() {
-  const email = $('email').value.trim();
-  const code = $('code').value.trim();
-  const r = await fetch('/customer/verify-otp', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({email, code})});
-  if (r.ok) {
-    let data = {}; try { data = await r.json(); } catch(e){}
-    if (data.is_new_user) showProfile(); else loadMenu();
-  } else { $('authErr').textContent = await readError(r); }
+async function verifyOtp(){
+  const email=$('email').value.trim(), code=$('code').value.trim();
+  const r=await fetch('/customer/verify-otp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,code})});
+  if(r.ok){ let d={}; try{d=await r.json();}catch(e){} if(d.is_new_user) showProfile(); else afterAuth(); }
+  else $('authErr').textContent=await readError(r);
 }
-
-// New customer: complete profile before unlocking the menu.
-function showProfile() {
-  $('app').innerHTML = `
-    <div class="card">
-      <h2>Complete Your Profile</h2>
+function showProfile(){
+  $('app').innerHTML=`
+    <div class="card"><h2>Complete Your Profile</h2>
       <div class="muted">Tell us who you are to start ordering.</div>
-      <input id="full_name" placeholder="Full name">
-      <input id="phone" placeholder="Phone number">
-      <button class="primary" style="margin-top:10px" onclick="saveProfile()">Continue to menu</button>
-      <div id="perr" style="color:#ef4444"></div>
-    </div>`;
+      <input id="full_name" placeholder="Full name"><input id="phone" placeholder="Phone number">
+      <button class="primary" style="margin-top:10px" onclick="saveProfile()">Continue</button>
+      <div id="perr" style="color:#ef4444"></div></div>`;
 }
-async function saveProfile() {
-  const full_name = $('full_name').value.trim();
-  const phone = $('phone').value.trim();
-  const r = await fetch('/customer/profile', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({full_name, phone})});
-  if (r.ok) loadMenu();
-  else { $('perr').textContent = await readError(r); }
+async function saveProfile(){
+  const full_name=$('full_name').value.trim(), phone=$('phone').value.trim();
+  const r=await fetch('/customer/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full_name,phone})});
+  if(r.ok) afterAuth(); else $('perr').textContent=await readError(r);
 }
 
-// 3) Menu + cart.
-async function loadMenu() {
+// 3) After auth: load profile, then join the table session.
+async function afterAuth(){
+  try { me = await api('/customer/me'); } catch(e){ showAuth(); return; }
+  if(!me.full_name){ showProfile(); return; }
+  showHero();
+  try {
+    const j = await api('/table-session/join','POST',{table_token:token});
+    if(j.status==='pending') showWaiting(j.host_name);
+    else enterTable();
+  } catch(e){ $('app').innerHTML = '<div class="card">'+e.message+'</div>'; }
+}
+function showHero(){
+  $('app').innerHTML = `<div class="hero">${greeting(me.full_name)}</div><div id="stage"></div>`;
+}
+function stage(){ return $('stage') || $('app'); }
+
+function showWaiting(host){
+  stopTimers();
+  stage().innerHTML = `<div class="card"><h2>Waiting for the host</h2>
+    <div class="muted">Waiting for Table Host (${host||'the host'}) to let you in...</div></div>`;
+  waitTimer = setInterval(async()=>{
+    try { const s = await api('/table-session/state?token='+encodeURIComponent(token));
+      const meMember = (s.members||[]).find(m=>m.is_me);
+      if(meMember){ clearInterval(waitTimer); waitTimer=null; enterTable(); }
+    } catch(e){}
+  }, 3000);
+}
+
+// 4) Enter the table: menu + panels.
+async function enterTable(){
+  await loadMenu();
+  renderState();
+  clearInterval(stateTimer); stateTimer=setInterval(renderState,4000);
+  clearInterval(pollTimer); pollTimer=setInterval(pollMine,4000);
+}
+
+async function loadMenu(){
   const m = await (await fetch('/menu')).json();
-  const app = $('app'); app.innerHTML = '';
-  app.appendChild(el('<div class="card"><h2>Menu</h2></div>'));
-  for (const item of m.items) {
-    const row = el(`<div class="item">
-      <div><div>${item.name}</div><div class="muted">KES ${item.price_kes}</div></div>
-      <div class="qty">
-        <button onclick="changeQty(${item.id},-1)">−</button>
-        <span id="q-${item.id}">0</span>
-        <button onclick="changeQty(${item.id},1)">+</button>
-      </div></div>`);
-    app.querySelector('.card').appendChild(row);
+  const root = stage(); root.innerHTML = `<div class="hero">${greeting(me.full_name)}</div>`;
+  const menuCard = el('<div class="card"><h2>Menu</h2></div>');
+  for(const it of m.items){
+    menuCard.appendChild(el(`<div class="item"><div><div>${it.name}</div><div class="muted">KES ${it.price_kes}</div></div>
+      <div class="qty"><button onclick="changeQty(${it.id},-1)">−</button><span id="q-${it.id}">0</span>
+      <button onclick="changeQty(${it.id},1)">+</button></div></div>`));
   }
-  const note = el('<div class="card"><input id="note" placeholder="Note (e.g. no onions)"></div>');
-  app.appendChild(note);
-  app.appendChild(el('<div class="card"><button class="primary" onclick="placeOrder()">Place order</button></div>'));
-  app.appendChild(el('<div class="card"><h2>Your orders</h2><div id="mine" class="muted">None yet.</div></div>'));
+  root.appendChild(menuCard);
+  root.appendChild(el('<div class="card"><input id="note" placeholder="Note (e.g. no onions)"></div>'));
+  root.appendChild(el('<div class="card"><button class="primary" onclick="placeOrder()">Place order</button></div>'));
+  root.appendChild(el('<div class="card"><h2>Your orders</h2><div id="mine" class="muted">None yet.</div></div>'));
+  root.appendChild(el('<div class="card"><h2>Table Members</h2><div id="members" class="muted">Loading...</div></div>'));
+  root.appendChild(el('<div class="card"><h2>Bill / Checkout</h2><div id="bill"></div></div>'));
+  root.appendChild(el('<div class="card"><h2>Table Chat</h2><div id="chat" class="chat"></div>
+    <div class="row" style="margin-top:8px"><input id="chat-input" placeholder="Message the table">
+    <button class="primary" onclick="sendChat()">Send</button></div></div>'));
   pollMine();
 }
-function changeQty(id, d) {
-  cart[id] = Math.max(0, (cart[id] || 0) + d);
-  const span = $('q-' + id); if (span) span.textContent = cart[id];
+function changeQty(id,d){ cart[id]=Math.max(0,(cart[id]||0)+d); const s=$('q-'+id); if(s) s.textContent=cart[id]; }
+async function placeOrder(){
+  const items=Object.entries(cart).filter(([,q])=>q>0).map(([id,q])=>({menu_item_id:+id,qty:q}));
+  if(!items.length){ alert('Add something first'); return; }
+  const key=crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random();
+  const r=await fetch('/orders',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({table_token:token,items,note:$('note').value,idempotency_key:key})});
+  if(r.ok){ cart={}; loadMenu(); } else alert(await readError(r));
 }
-async function placeOrder() {
-  const items = Object.entries(cart).filter(([, q]) => q > 0).map(([id, q]) => ({menu_item_id: +id, qty: q}));
-  if (!items.length) { alert('Add something first'); return; }
-  const key = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
-  const r = await fetch('/orders', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({table_token: token, items, note: $('note').value, idempotency_key: key})});
-  if (r.ok) { cart = {}; loadMenu(); }
-  else { const e = await r.json(); alert(e.detail || 'Order failed'); }
+async function pollMine(){
+  if(!(await signedIn())){ stopTimers(); return; }
+  const orders=await (await fetch('/orders/mine')).json();
+  const box=$('mine'); if(!box) return;
+  box.innerHTML = orders.length ? orders.map(o=>`<div class="item"><span>Order #${o.id}</span><span class="badge">${o.status}</span></div>`).join('') : 'None yet.';
 }
-async function pollMine() {
-  if (!(await signedIn())) { stopPolling(); return; }  // 401/403 -> stop polling
-  const orders = await (await fetch('/orders/mine')).json();
-  const box = $('mine'); if (!box) return;
-  if (!orders.length) { box.textContent = 'None yet.'; return; }
-  box.innerHTML = orders.map(o =>
-    `<div class="item"><span>Order #${o.id}</span><span class="badge">${o.status}</span></div>`).join('');
+
+// 5) Table session state: members, pending approvals, bill, chat.
+async function renderState(){
+  let s; try { s = await api('/table-session/state?token='+encodeURIComponent(token)); } catch(e){ return; }
+  state = s;
+  renderMembers(s);
+  renderBill(s);
+  renderChat(s);
+}
+function nameOf(cid){ const m=(state.members||[]).find(x=>x.customer_id===cid); return m?m.full_name:'Someone'; }
+function renderMembers(s){
+  const box=$('members'); if(!box) return;
+  let html='';
+  if(s.is_host && (s.pending||[]).length){
+    html += '<div class="muted">Join requests:</div>';
+    for(const p of s.pending){
+      html += `<div class="item"><span>${p.full_name||'Guest'}</span>
+        <span><button class="small primary" onclick="approve(${p.member_id},true)">Approve</button>
+        <button class="small" onclick="approve(${p.member_id},false)">Decline</button></span></div>`;
+    }
+  }
+  for(const m of s.members){
+    const payer = m.paid_by_customer_id===m.customer_id ? 'themselves' : nameOf(m.paid_by_customer_id);
+    const toggle = m.is_me ? '' :
+      `<button class="small" onclick="payFor(${m.customer_id})">${m.paid_by_customer_id===me.id?'Stop paying':'Pay for'}</button>`;
+    html += `<div class="item"><span>${m.full_name||'Guest'}${m.is_me?' (you)':''}<div class="muted">KES ${m.subtotal} · paid by ${payer}</div></span>${toggle}</div>`;
+  }
+  box.innerHTML = html || '<div class="muted">No members yet.</div>';
+}
+async function approve(id,ok){ try{ await api('/table-session/approve','POST',{member_id:id,approve:ok}); renderState(); }catch(e){ alert(e.message); } }
+async function payFor(cid){ try{ await api('/table-session/pay-for','POST',{target_customer_id:cid}); renderState(); }catch(e){ alert(e.message); } }
+
+function renderBill(s){
+  const box=$('bill'); if(!box) return;
+  const members=s.members||[];
+  const mine = members.filter(m=>m.paid_by_customer_id===me.id).reduce((a,m)=>a+m.subtotal,0);
+  const whole = members.reduce((a,m)=>a+m.subtotal,0);
+  box.innerHTML = `
+    <div class="item"><span>My Bill (incl. anyone I'm paying for)</span><strong>KES ${mine}</strong></div>
+    <div class="item"><span>Whole Table Bill</span><strong>KES ${whole}</strong></div>
+    <div style="margin-top:8px">
+      <label><input type="radio" name="scope" value="mine" checked> Pay for myself</label>
+      <label style="margin-left:10px"><input type="radio" name="scope" value="table"> Pay for whole table</label>
+    </div>
+    <div class="muted" style="margin-top:8px">Payment prompt number (editable):</div>
+    <input id="bill-phone" value="${(me.phone||'')}">
+    <button class="primary" style="margin-top:8px" onclick="checkout()">Settle / Request Bill</button>
+    <div class="muted">We'll send a payment prompt to this number.</div>`;
+}
+async function checkout(){
+  const scope=(document.querySelector('input[name="scope"]:checked')||{}).value||'mine';
+  const phone=$('bill-phone').value.trim();
+  if(phone){ me.phone=phone; try{ await api('/customer/profile','POST',{full_name:me.full_name,phone}); }catch(e){} }
+  try{ const r=await api('/table-session/checkout','POST',{scope}); alert(r.session_closed?'Bill settled. Table closed.':'Bill settled.'); pollMine(); renderState(); }
+  catch(e){ alert(e.message); }
+}
+
+function renderChat(s){
+  const box=$('chat'); if(!box) return;
+  box.innerHTML = (s.messages||[]).slice().reverse().map(m=>
+    `<div class="bubble"><strong>${m.full_name||'Guest'}:</strong> ${m.message.replace(/</g,'&lt;')}</div>`).join('') || '<div class="muted">No messages yet.</div>';
+}
+async function sendChat(){
+  const inp=$('chat-input'); const msg=inp.value.trim(); if(!msg) return;
+  try{ await api('/table-session/chat','POST',{message:msg}); inp.value=''; renderState(); }catch(e){ alert(e.message); }
 }
 
 // Boot
-(async () => {
-  if (!token) { $('app').innerHTML = '<div class="card">No table code.</div>'; return; }
-  if (!(await loadTable())) return;
-  if (await signedIn()) { loadMenu(); pollTimer = setInterval(pollMine, 4000); }
-  else showAuth();
+(async()=>{
+  if(!token){ $('app').innerHTML='<div class="card">No table code.</div>'; return; }
+  if(!(await loadTable())) return;
+  if(await signedIn()) afterAuth(); else showAuth();
 })();
 </script>
 </body>

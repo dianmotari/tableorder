@@ -53,11 +53,29 @@ _SQLITE = [
     )""",
     """CREATE TABLE IF NOT EXISTS table_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        hotel_id INTEGER NOT NULL,
+        hotel_id INTEGER,
         table_id INTEGER NOT NULL,
+        host_customer_id INTEGER,
         status TEXT NOT NULL DEFAULT 'open', -- 'open' | 'closed'
-        opened_at TEXT NOT NULL,
+        created_at TEXT,
+        opened_at TEXT,
         closed_at TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS table_session_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        customer_id INTEGER NOT NULL,
+        role TEXT NOT NULL DEFAULT 'guest',      -- 'host' | 'guest'
+        status TEXT NOT NULL DEFAULT 'pending',  -- 'approved' | 'pending' | 'declined'
+        paid_by_customer_id INTEGER,
+        joined_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS table_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        customer_id INTEGER NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL
     )""",
     """CREATE TABLE IF NOT EXISTS categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,11 +200,29 @@ _PG = [
     )""",
     """CREATE TABLE IF NOT EXISTS table_sessions (
         id SERIAL PRIMARY KEY,
-        hotel_id INTEGER NOT NULL,
+        hotel_id INTEGER,
         table_id INTEGER NOT NULL,
+        host_customer_id INTEGER,
         status TEXT NOT NULL DEFAULT 'open',
-        opened_at TEXT NOT NULL,
+        created_at TEXT,
+        opened_at TEXT,
         closed_at TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS table_session_members (
+        id SERIAL PRIMARY KEY,
+        session_id INTEGER NOT NULL,
+        customer_id INTEGER NOT NULL,
+        role TEXT NOT NULL DEFAULT 'guest',
+        status TEXT NOT NULL DEFAULT 'pending',
+        paid_by_customer_id INTEGER,
+        joined_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS table_messages (
+        id SERIAL PRIMARY KEY,
+        session_id INTEGER NOT NULL,
+        customer_id INTEGER NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL
     )""",
     """CREATE TABLE IF NOT EXISTS categories (
         id SERIAL PRIMARY KEY,
@@ -298,6 +334,14 @@ def _migrate():
                     + default
                 )
             )
+    # table_sessions gained host_customer_id and created_at for the table-session
+    # system. Add them to existing databases (no-op if already present).
+    for column in ("host_customer_id", "created_at"):
+        if not _column_exists("table_sessions", column):
+            with db.get_conn() as conn:
+                conn.cursor().execute(
+                    db._translate(f"ALTER TABLE table_sessions ADD COLUMN {column} TEXT")
+                )
 
 
 def create_all():

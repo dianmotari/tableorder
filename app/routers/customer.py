@@ -200,7 +200,17 @@ def google_signin(body: GoogleIn, response: Response):
 # --- who am I / logout ----------------------------------------------------
 @router.get("/me")
 def me(user=Depends(auth.require_roles("customer"))):
-    return {"id": user["id"], "email": user["email"], "role": user["role"]}
+    prof = db.query_one(
+        "SELECT full_name, phone FROM customers WHERE email = ?",
+        ((user.get("email") or "").lower(),),
+    )
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "role": user["role"],
+        "full_name": (prof or {}).get("full_name"),
+        "phone": (prof or {}).get("phone"),
+    }
 
 
 @router.post("/logout")
