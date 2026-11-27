@@ -92,16 +92,12 @@ def request_otp(body: EmailIn):
         "VALUES (?, ?, 0, 0, ?, ?)",
         (email, _hash_code(code), _iso(_now()), _iso(_now() + timedelta(minutes=OTP_TTL_MIN))),
     )
-    # Try to email the code. If SMTP is not configured OR sending fails, never
-    # crash with 500: log the code and return it as dev_code so testing works.
-    sent = False
+    # Send the code via Resend. If it is not configured or the provider rejects
+    # it, return an error - never leak the OTP to the client.
     try:
-        sent = emailer.send_otp(email, code)
-    except Exception as exc:  # noqa: BLE001 - any mail error must not break login
-        print(f"[OTP] email send failed for {email}: {exc}")
-    if not sent:
-        print(f"[OTP] code for {email}: {code}")
-        return {"ok": True, "dev_code": code}
+        emailer.send_otp(email, code)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=str(exc))
     return {"ok": True, "message": "Code sent by email."}
 
 
@@ -136,7 +132,39 @@ def verify_otp(body: VerifyIn, response: Response):
     db.execute("UPDATE otp_codes SET consumed = 1 WHERE id = ?", (row["id"],))
     user_id = _find_or_create_customer(email)
     _set_cookie(response, user_id)
-    return {"ok": True}
+
+    # Returning vs new: a customer with a saved full_name is "returning".
+    cust = db.query_one(
+        "SELECT id, email, full_name, phone FROM customers WHERE email = ?", (email,))
+    is_new = not (cust and cust.get("full_name"))
+    return {"ok": True, "is_new_user": is_new, "customer": cust if not is_new else None}
+
+
+# --- customer profile (new-customer registration) -------------------------
+class ProfileIn(BaseModel):
+    full_name: str
+    phone: str
+
+
+@router.post("/profile")
+def save_profile(body: ProfileIn, user=Depends(auth.require_roles("customer"))):
+    full_name = body.full_name.strip()
+    phone = body.phone.strip()
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Full name is required")
+    email = (user.get("email") or "").lower()
+    existing = db.query_one("SELECT id FROM customers WHERE email = ?", (email,))
+    if existing:
+        db.execute(
+            "UPDATE customers SET full_name = ?, phone = ? WHERE id = ?",
+            (full_name, phone, existing["id"]),
+        )
+    else:
+        db.execute(
+            "INSERT INTO customers (email, full_name, phone, created_at) VALUES (?, ?, ?, ?)",
+            (email, full_name, phone, auth.now_iso()),
+        )
+    return {"ok": True, "is_new_user": False}
 
 
 # --- Google sign-in -------------------------------------------------------

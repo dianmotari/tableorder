@@ -26,6 +26,8 @@ class Settings:
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
 
     # Email OTP
+    # Email OTP via Resend (HTTPS API). Set EMAIL_API_KEY in .env / host env.
+    EMAIL_API_KEY = os.getenv("EMAIL_API_KEY", "").strip()
     SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
     SMTP_PORT = os.getenv("SMTP_PORT", "").strip()
     SMTP_USER = os.getenv("SMTP_USER", "").strip()

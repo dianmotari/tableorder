@@ -44,6 +44,13 @@ _SQLITE = [
         active INTEGER NOT NULL DEFAULT 1,-- soft-delete: 0 kills the QR
         created_at TEXT NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL UNIQUE,
+        full_name TEXT,
+        phone TEXT,
+        created_at TEXT NOT NULL
+    )""",
     """CREATE TABLE IF NOT EXISTS table_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         hotel_id INTEGER NOT NULL,
@@ -164,6 +171,13 @@ _PG = [
         token TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL DEFAULT 'free',
         active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS customers (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        full_name TEXT,
+        phone TEXT,
         created_at TEXT NOT NULL
     )""",
     """CREATE TABLE IF NOT EXISTS table_sessions (

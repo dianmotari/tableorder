@@ -63,7 +63,7 @@ function showAuth() {
         <button class="primary" style="margin-top:8px" onclick="requestOtp()">Send code</button>
       </div>
       <div id="step2" style="display:none;margin-top:10px">
-        <div class="muted">Enter the 6-digit code (check the server console in dev).</div>
+        <div class="muted">Enter the 6-digit code sent to your email.</div>
         <input id="code" placeholder="6-digit code">
         <button class="primary" style="margin-top:8px" onclick="verifyOtp()">Verify</button>
       </div>
@@ -74,22 +74,39 @@ async function requestOtp() {
   const email = $('email').value.trim();
   const r = await fetch('/customer/request-otp', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({email})});
-  if (r.ok) {
-    let data = {}; try { data = await r.json(); } catch(e){}
-    $('step1').style.display='none'; $('step2').style.display='block';
-    if (data.dev_code){
-      $('code').value = data.dev_code;  // pre-fill for testing without email
-      $('authErr').textContent = 'Dev code (no email server): ' + data.dev_code;
-    }
-  } else { $('authErr').textContent = await readError(r); }
+  if (r.ok) { $('step1').style.display='none'; $('step2').style.display='block'; }
+  else { $('authErr').textContent = await readError(r); }
 }
 async function verifyOtp() {
   const email = $('email').value.trim();
   const code = $('code').value.trim();
   const r = await fetch('/customer/verify-otp', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({email, code})});
+  if (r.ok) {
+    let data = {}; try { data = await r.json(); } catch(e){}
+    if (data.is_new_user) showProfile(); else loadMenu();
+  } else { $('authErr').textContent = await readError(r); }
+}
+
+// New customer: complete profile before unlocking the menu.
+function showProfile() {
+  $('app').innerHTML = `
+    <div class="card">
+      <h2>Complete Your Profile</h2>
+      <div class="muted">Tell us who you are to start ordering.</div>
+      <input id="full_name" placeholder="Full name">
+      <input id="phone" placeholder="Phone number">
+      <button class="primary" style="margin-top:10px" onclick="saveProfile()">Continue to menu</button>
+      <div id="perr" style="color:#ef4444"></div>
+    </div>`;
+}
+async function saveProfile() {
+  const full_name = $('full_name').value.trim();
+  const phone = $('phone').value.trim();
+  const r = await fetch('/customer/profile', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({full_name, phone})});
   if (r.ok) loadMenu();
-  else { $('authErr').textContent = await readError(r); }
+  else { $('perr').textContent = await readError(r); }
 }
 
 // 3) Menu + cart.

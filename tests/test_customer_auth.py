@@ -70,30 +70,29 @@ def test_customer_cannot_reach_admin():
     client.cookies.clear()
 
 
-def test_request_otp_returns_dev_code_when_smtp_fails(monkeypatch):
+def test_request_otp_error_when_email_fails(monkeypatch):
     schema.create_all()
-    # Simulate a broken SMTP server: must NOT 500.
+    # A provider/config failure must return an error, never leak the code.
     def boom(email, code):
-        raise RuntimeError("smtp down")
+        raise RuntimeError("Email service is not configured (EMAIL_API_KEY missing).")
     monkeypatch.setattr(customer_mod.emailer, "send_otp", boom)
 
     email = f"f_{uuid.uuid4().hex[:8]}@example.com"
     r = client.post("/customer/request-otp", json={"email": email})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is True
-    assert "dev_code" in body and len(body["dev_code"]) == 6
+    assert r.status_code == 503
+    assert "dev_code" not in r.json()
 
 
-def test_request_otp_returns_dev_code_when_smtp_unset(monkeypatch):
+def test_request_otp_success_has_no_dev_code(monkeypatch):
     schema.create_all()
-    # No SMTP configured -> send_otp returns False -> dev_code in response.
-    monkeypatch.setattr(customer_mod.emailer, "send_otp", lambda email, code: False)
-
+    box = _capture_otp(monkeypatch)  # capture code, no real email
     email = f"g_{uuid.uuid4().hex[:8]}@example.com"
     r = client.post("/customer/request-otp", json={"email": email})
     assert r.status_code == 200
-    assert "dev_code" in r.json()
+    body = r.json()
+    assert body["ok"] is True
+    assert "dev_code" not in body
+    assert len(box["code"]) == 6
 
 
 def test_otp_consumed_is_integer_and_blocks_reuse(monkeypatch):
@@ -117,3 +116,30 @@ def test_otp_consumed_is_integer_and_blocks_reuse(monkeypatch):
     # A consumed code cannot be reused.
     client.cookies.clear()
     assert client.post("/customer/verify-otp", json={"email": email, "code": code}).status_code == 400
+
+
+def test_new_customer_profile_then_returning(monkeypatch):
+    schema.create_all()
+    box = _capture_otp(monkeypatch)
+    email = f"n_{uuid.uuid4().hex[:8]}@example.com"
+
+    # First sign-in: new user, no profile yet.
+    client.cookies.clear()
+    assert client.post("/customer/request-otp", json={"email": email}).status_code == 200
+    r = client.post("/customer/verify-otp", json={"email": email, "code": box["code"]})
+    assert r.status_code == 200
+    assert r.json()["is_new_user"] is True
+
+    # Complete the profile.
+    prof = client.post("/customer/profile", json={"full_name": "Jane Doe", "phone": "0712345678"})
+    assert prof.status_code == 200
+
+    # Second sign-in: returning customer with saved profile.
+    client.cookies.clear()
+    assert client.post("/customer/request-otp", json={"email": email}).status_code == 200
+    r = client.post("/customer/verify-otp", json={"email": email, "code": box["code"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["is_new_user"] is False
+    assert body["customer"]["full_name"] == "Jane Doe"
+    assert body["customer"]["phone"] == "0712345678"
