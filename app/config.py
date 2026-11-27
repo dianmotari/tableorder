@@ -31,6 +31,7 @@ class Settings:
     SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
     SMTP_PORT = os.getenv("SMTP_PORT", "").strip()
     SMTP_USER = os.getenv("SMTP_USER", "").strip()
+    SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
     EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip()
 
