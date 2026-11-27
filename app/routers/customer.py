@@ -92,8 +92,17 @@ def request_otp(body: EmailIn):
         "VALUES (?, ?, 0, FALSE, ?, ?)",
         (email, _hash_code(code), _iso(_now()), _iso(_now() + timedelta(minutes=OTP_TTL_MIN))),
     )
-    emailer.send_otp(email, code)
-    return {"ok": True, "message": "Code sent (check the server console in dev)."}
+    # Try to email the code. If SMTP is not configured OR sending fails, never
+    # crash with 500: log the code and return it as dev_code so testing works.
+    sent = False
+    try:
+        sent = emailer.send_otp(email, code)
+    except Exception as exc:  # noqa: BLE001 - any mail error must not break login
+        print(f"[OTP] email send failed for {email}: {exc}")
+    if not sent:
+        print(f"[OTP] code for {email}: {code}")
+        return {"ok": True, "dev_code": code}
+    return {"ok": True, "message": "Code sent by email."}
 
 
 # --- email OTP: verify and sign in ----------------------------------------

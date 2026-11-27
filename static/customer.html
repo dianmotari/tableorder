@@ -43,6 +43,13 @@ async function loadTable() {
 }
 
 // 2) Sign in (email OTP) if needed.
+let pollTimer = null;
+function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+async function readError(r){
+  // Never call r.json() blindly: a 500 may return plain text ("Internal Server Error").
+  try { const j = await r.json(); return j.detail || JSON.stringify(j); }
+  catch(e){ try { return await r.text(); } catch(_){ return 'Request failed'; } }
+}
 async function signedIn() {
   const r = await fetch('/customer/me');
   return r.ok;
@@ -67,8 +74,14 @@ async function requestOtp() {
   const email = $('email').value.trim();
   const r = await fetch('/customer/request-otp', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({email})});
-  if (r.ok) { $('step1').style.display='none'; $('step2').style.display='block'; }
-  else { const e = await r.json(); $('authErr').textContent = e.detail || 'Failed'; }
+  if (r.ok) {
+    let data = {}; try { data = await r.json(); } catch(e){}
+    $('step1').style.display='none'; $('step2').style.display='block';
+    if (data.dev_code){
+      $('code').value = data.dev_code;  // pre-fill for testing without email
+      $('authErr').textContent = 'Dev code (no email server): ' + data.dev_code;
+    }
+  } else { $('authErr').textContent = await readError(r); }
 }
 async function verifyOtp() {
   const email = $('email').value.trim();
@@ -76,7 +89,7 @@ async function verifyOtp() {
   const r = await fetch('/customer/verify-otp', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({email, code})});
   if (r.ok) loadMenu();
-  else { const e = await r.json(); $('authErr').textContent = e.detail || 'Wrong code'; }
+  else { $('authErr').textContent = await readError(r); }
 }
 
 // 3) Menu + cart.
@@ -114,7 +127,7 @@ async function placeOrder() {
   else { const e = await r.json(); alert(e.detail || 'Order failed'); }
 }
 async function pollMine() {
-  if (!(await signedIn())) return;
+  if (!(await signedIn())) { stopPolling(); return; }  // 401/403 -> stop polling
   const orders = await (await fetch('/orders/mine')).json();
   const box = $('mine'); if (!box) return;
   if (!orders.length) { box.textContent = 'None yet.'; return; }
@@ -126,8 +139,8 @@ async function pollMine() {
 (async () => {
   if (!token) { $('app').innerHTML = '<div class="card">No table code.</div>'; return; }
   if (!(await loadTable())) return;
-  if (await signedIn()) loadMenu(); else showAuth();
-  setInterval(pollMine, 4000);
+  if (await signedIn()) { loadMenu(); pollTimer = setInterval(pollMine, 4000); }
+  else showAuth();
 })();
 </script>
 </body>

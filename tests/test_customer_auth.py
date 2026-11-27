@@ -68,3 +68,29 @@ def test_customer_cannot_reach_admin():
     client.cookies.set(auth.COOKIE_NAME, auth.create_session(uid))
     assert client.get("/admin/ping").status_code == 403
     client.cookies.clear()
+
+
+def test_request_otp_returns_dev_code_when_smtp_fails(monkeypatch):
+    schema.create_all()
+    # Simulate a broken SMTP server: must NOT 500.
+    def boom(email, code):
+        raise RuntimeError("smtp down")
+    monkeypatch.setattr(customer_mod.emailer, "send_otp", boom)
+
+    email = f"f_{uuid.uuid4().hex[:8]}@example.com"
+    r = client.post("/customer/request-otp", json={"email": email})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert "dev_code" in body and len(body["dev_code"]) == 6
+
+
+def test_request_otp_returns_dev_code_when_smtp_unset(monkeypatch):
+    schema.create_all()
+    # No SMTP configured -> send_otp returns False -> dev_code in response.
+    monkeypatch.setattr(customer_mod.emailer, "send_otp", lambda email, code: False)
+
+    email = f"g_{uuid.uuid4().hex[:8]}@example.com"
+    r = client.post("/customer/request-otp", json={"email": email})
+    assert r.status_code == 200
+    assert "dev_code" in r.json()
