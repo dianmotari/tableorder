@@ -5,6 +5,7 @@ Run from the project root:  python -m pytest -q
 """
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import auth, db, schema
@@ -76,7 +77,8 @@ def test_duplicate_waiter_email_returns_409():
 
 def test_startup_dedupes_and_indexes_emails():
     schema.create_all()
-    # Simulate legacy duplicates (same email, different case) directly in the DB.
+    # Drop the index so we can simulate legacy duplicate rows.
+    db.execute("DROP INDEX IF EXISTS idx_users_email_unique")
     email = f"legacy_{uuid.uuid4().hex[:8]}@e.com"
     for _ in range(2):
         db.execute(
@@ -84,7 +86,15 @@ def test_startup_dedupes_and_indexes_emails():
             "VALUES (?, 'customer', ?, 'C', 1, ?)",
             (1, email.upper(), auth.now_iso()),
         )
+    # Startup routine dedupes and recreates the unique index.
     db.ensure_users_email_unique()
     n = db.query_one(
         "SELECT COUNT(*) AS n FROM users WHERE LOWER(email) = ?", (email.lower(),))["n"]
     assert n == 1
+    # And the index is back, blocking further duplicates.
+    with pytest.raises(Exception):
+        db.execute(
+            "INSERT INTO users (hotel_id, role, email, name, active, created_at) "
+            "VALUES (?, 'customer', ?, 'C', 1, ?)",
+            (1, email.upper(), auth.now_iso()),
+        )

@@ -96,3 +96,28 @@ def test_non_admin_cannot_manage_tables():
     resp = client.post("/admin/tables", json={"name": "Nope"})
     assert resp.status_code == 403
     client.cookies.clear()
+
+
+def test_qr_uses_static_customer_url():
+    schema.create_all()
+    _login_admin()
+    token = client.post("/admin/tables", json={"name": "Table Q"}).json()["token"]
+    page = client.get("/admin/tables/print/all")
+    assert page.status_code == 200
+    # QR must point at /static/customer.html (not the bare /customer.html).
+    assert f"/static/customer.html?token={token}" in page.text
+
+
+def test_customer_html_redirect_preserves_token():
+    client.cookies.clear()
+    r = client.get("/customer.html?token=abc123", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == "/static/customer.html?token=abc123"
+
+
+def test_admin_and_waiter_html_redirects():
+    client.cookies.clear()
+    for name in ("admin.html", "waiter.html"):
+        r = client.get(f"/{name}", follow_redirects=False)
+        assert r.status_code == 307
+        assert r.headers["location"] == f"/static/{name}"

@@ -107,7 +107,7 @@ def _qr_card_html(table_name: str, token: str, base_url: str) -> str:
     # Maximum scan reliability: NO centre overlay at all - 100% unobstructed
     # black-and-white modules. Error correction H and a white quiet-zone border
     # (margin ~4 modules) so any phone camera reads it first time.
-    url = f"{base_url}/customer.html?token={token}"
+    url = f"{base_url}/static/customer.html?token={token}"
     return f"""
     <div class="qr-card">
       <div id="qr-{token}"></div>

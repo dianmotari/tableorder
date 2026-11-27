@@ -13,7 +13,8 @@ try:
 except Exception:
     pass
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -83,3 +84,28 @@ def health():
 @app.get("/")
 def index():
     return {"message": "TableOrder API is running. See /health and /docs."}
+
+
+# --- page redirects (keep old/printed links working) ----------------------
+# HTML pages live under /static. These redirect the short URLs (preserving any
+# query string, e.g. ?token=...) so already-printed QR codes still open.
+def _redirect_to_static(request: Request, name: str) -> RedirectResponse:
+    target = f"/static/{name}"
+    if request.url.query:
+        target += "?" + request.url.query
+    return RedirectResponse(url=target, status_code=307)
+
+
+@app.get("/customer.html")
+def customer_html(request: Request):
+    return _redirect_to_static(request, "customer.html")
+
+
+@app.get("/admin.html")
+def admin_html(request: Request):
+    return _redirect_to_static(request, "admin.html")
+
+
+@app.get("/waiter.html")
+def waiter_html(request: Request):
+    return _redirect_to_static(request, "waiter.html")
