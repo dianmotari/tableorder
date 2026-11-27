@@ -148,9 +148,9 @@ async function loadMenu(){
   root.appendChild(el('<div class="card"><h2>Your orders</h2><div id="mine" class="muted">None yet.</div></div>'));
   root.appendChild(el('<div class="card"><h2>Table Members</h2><div id="members" class="muted">Loading...</div></div>'));
   root.appendChild(el('<div class="card"><h2>Bill / Checkout</h2><div id="bill"></div></div>'));
-  root.appendChild(el('<div class="card"><h2>Table Chat</h2><div id="chat" class="chat"></div>
+  root.appendChild(el(`<div class="card"><h2>Table Chat</h2><div id="chat" class="chat"></div>
     <div class="row" style="margin-top:8px"><input id="chat-input" placeholder="Message the table">
-    <button class="primary" onclick="sendChat()">Send</button></div></div>'));
+    <button class="primary" onclick="sendChat()">Send</button></div></div>`));
   pollMine();
 }
 function changeQty(id,d){ cart[id]=Math.max(0,(cart[id]||0)+d); const s=$('q-'+id); if(s) s.textContent=cart[id]; }
