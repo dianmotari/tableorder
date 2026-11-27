@@ -29,17 +29,22 @@ def _sqlite_path() -> str:
 
 @contextmanager
 def get_conn():
-    """Yield a DB connection. Commits on success, rolls back on any error."""
+    """Yield a DB connection. Commits on success, rolls back on any error.
+
+    Every connection is returned to the pool in a finally block (Postgres) or
+    closed (SQLite), so nothing is leaked even when the body raises.
+    """
     if _is_postgres():
-        conn = _pg_connect()
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        pool = _ensure_pool()
+        # The pool's connection() context manager guarantees the connection is
+        # returned to the pool on exit (this is what prevents PoolTimeout).
+        with pool.connection() as conn:
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     else:
         conn = sqlite3.connect(_sqlite_path())
         conn.row_factory = sqlite3.Row  # rows behave like dicts
@@ -68,7 +73,8 @@ def _pg_dsn() -> str:
     return url
 
 
-def _pg_connect():
+def _ensure_pool():
+    """Create the global connection pool once and return it (no acquisition)."""
     global _pg_pool
     if _pg_pool is None:
         # Imported lazily so local dev does not need psycopg installed.
@@ -89,7 +95,7 @@ def _pg_connect():
             check=ConnectionPool.check_connection,
             kwargs={"prepare_threshold": None},
         )
-    return _pg_pool.getconn()
+    return _pg_pool
 
 
 def _translate(sql: str) -> str:
