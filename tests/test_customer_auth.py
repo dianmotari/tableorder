@@ -94,3 +94,26 @@ def test_request_otp_returns_dev_code_when_smtp_unset(monkeypatch):
     r = client.post("/customer/request-otp", json={"email": email})
     assert r.status_code == 200
     assert "dev_code" in r.json()
+
+
+def test_otp_consumed_is_integer_and_blocks_reuse(monkeypatch):
+    schema.create_all()
+    box = _capture_otp(monkeypatch)
+    email = f"h_{uuid.uuid4().hex[:8]}@example.com"
+    assert client.post("/customer/request-otp", json={"email": email}).status_code == 200
+    code = box["code"]
+
+    # Stored as integer 0 (not boolean).
+    row = db.query_one(
+        "SELECT consumed FROM otp_codes WHERE email = ? ORDER BY id DESC LIMIT 1", (email,))
+    assert row["consumed"] == 0
+
+    # Correct code verifies and flips consumed to integer 1.
+    assert client.post("/customer/verify-otp", json={"email": email, "code": code}).status_code == 200
+    row = db.query_one(
+        "SELECT consumed FROM otp_codes WHERE email = ? ORDER BY id DESC LIMIT 1", (email,))
+    assert row["consumed"] == 1
+
+    # A consumed code cannot be reused.
+    client.cookies.clear()
+    assert client.post("/customer/verify-otp", json={"email": email, "code": code}).status_code == 400

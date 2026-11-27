@@ -89,7 +89,7 @@ def request_otp(body: EmailIn):
     code = f"{secrets.randbelow(1000000):06d}"  # 6 digits
     db.execute(
         "INSERT INTO otp_codes (email, code_hash, attempts, consumed, created_at, expires_at) "
-        "VALUES (?, ?, 0, FALSE, ?, ?)",
+        "VALUES (?, ?, 0, 0, ?, ?)",
         (email, _hash_code(code), _iso(_now()), _iso(_now() + timedelta(minutes=OTP_TTL_MIN))),
     )
     # Try to email the code. If SMTP is not configured OR sending fails, never
@@ -116,7 +116,7 @@ def verify_otp(body: VerifyIn, response: Response):
     email = body.email.lower().strip()
     row = db.query_one(
         "SELECT id, code_hash, attempts, expires_at FROM otp_codes "
-        "WHERE email = ? AND consumed = FALSE ORDER BY id DESC LIMIT 1",
+        "WHERE email = ? AND consumed = 0 ORDER BY id DESC LIMIT 1",
         (email,),
     )
     if not row:
@@ -133,7 +133,7 @@ def verify_otp(body: VerifyIn, response: Response):
         raise HTTPException(status_code=400, detail="Wrong code.")
 
     # Correct: consume the code and sign the customer in.
-    db.execute("UPDATE otp_codes SET consumed = TRUE WHERE id = ?", (row["id"],))
+    db.execute("UPDATE otp_codes SET consumed = 1 WHERE id = ?", (row["id"],))
     user_id = _find_or_create_customer(email)
     _set_cookie(response, user_id)
     return {"ok": True}
