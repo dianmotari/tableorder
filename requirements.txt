@@ -1,0 +1,15 @@
+# TableOrder - dependencies (local dev + production hosting)
+# Install with:  pip install -r requirements.txt
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.34
+bcrypt==5.0.0
+httpx==0.29.0
+pytest==9.2.0
+python-dotenv
+email-validator
+
+# --- Production hosting (Render / Railway / any Linux container) ---
+gunicorn
+psycopg[binary]      # PostgreSQL driver (v3)
+psycopg-pool         # connection pool with pre-ping (check_connection)

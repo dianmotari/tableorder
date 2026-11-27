@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TableOrder — Order</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin:0; background:#f4f6f8; color:#222; }
+  header { background:#0f766e; color:#fff; padding:12px 16px; }
+  header h1 { margin:0; font-size:18px; }
+  main { padding:12px; max-width:520px; margin:0 auto; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }
+  .muted { color:#6b7280; font-size:13px; }
+  button { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#fff; cursor:pointer; }
+  button.primary { background:#0f766e; color:#fff; border-color:#0f766e; }
+  input { padding:8px; border-radius:8px; border:1px solid #d1d5db; width:100%; box-sizing:border-box; }
+  .item { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #eee; }
+  .qty { display:flex; gap:6px; align-items:center; }
+  .badge { padding:2px 8px; border-radius:999px; font-size:12px; background:#e5e7eb; }
+</style>
+</head>
+<body>
+<header><h1 id="title">TableOrder</h1></header>
+<main id="app"></main>
+
+<script>
+// Tiny helpers
+const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.search).get('token') || '';
+let cart = {};        // menu_item_id -> qty
+let tableId = null;
+
+function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
+
+// 1) Validate the table token.
+async function loadTable() {
+  const r = await fetch('/t/' + token);
+  if (!r.ok) { $('app').innerHTML = '<div class="card">This table code is not valid.</div>'; return false; }
+  const t = await r.json();
+  tableId = t.table_id;
+  $('title').textContent = t.table_name + ' — Order';
+  return true;
+}
+
+// 2) Sign in (email OTP) if needed.
+async function signedIn() {
+  const r = await fetch('/customer/me');
+  return r.ok;
+}
+function showAuth() {
+  $('app').innerHTML = `
+    <div class="card">
+      <h2>Sign in to order</h2>
+      <div id="step1">
+        <input id="email" placeholder="Your email">
+        <button class="primary" style="margin-top:8px" onclick="requestOtp()">Send code</button>
+      </div>
+      <div id="step2" style="display:none;margin-top:10px">
+        <div class="muted">Enter the 6-digit code (check the server console in dev).</div>
+        <input id="code" placeholder="6-digit code">
+        <button class="primary" style="margin-top:8px" onclick="verifyOtp()">Verify</button>
+      </div>
+      <div id="authErr" class="muted" style="color:#ef4444"></div>
+    </div>`;
+}
+async function requestOtp() {
+  const email = $('email').value.trim();
+  const r = await fetch('/customer/request-otp', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email})});
+  if (r.ok) { $('step1').style.display='none'; $('step2').style.display='block'; }
+  else { const e = await r.json(); $('authErr').textContent = e.detail || 'Failed'; }
+}
+async function verifyOtp() {
+  const email = $('email').value.trim();
+  const code = $('code').value.trim();
+  const r = await fetch('/customer/verify-otp', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email, code})});
+  if (r.ok) loadMenu();
+  else { const e = await r.json(); $('authErr').textContent = e.detail || 'Wrong code'; }
+}
+
+// 3) Menu + cart.
+async function loadMenu() {
+  const m = await (await fetch('/menu')).json();
+  const app = $('app'); app.innerHTML = '';
+  app.appendChild(el('<div class="card"><h2>Menu</h2></div>'));
+  for (const item of m.items) {
+    const row = el(`<div class="item">
+      <div><div>${item.name}</div><div class="muted">KES ${item.price_kes}</div></div>
+      <div class="qty">
+        <button onclick="changeQty(${item.id},-1)">−</button>
+        <span id="q-${item.id}">0</span>
+        <button onclick="changeQty(${item.id},1)">+</button>
+      </div></div>`);
+    app.querySelector('.card').appendChild(row);
+  }
+  const note = el('<div class="card"><input id="note" placeholder="Note (e.g. no onions)"></div>');
+  app.appendChild(note);
+  app.appendChild(el('<div class="card"><button class="primary" onclick="placeOrder()">Place order</button></div>'));
+  app.appendChild(el('<div class="card"><h2>Your orders</h2><div id="mine" class="muted">None yet.</div></div>'));
+  pollMine();
+}
+function changeQty(id, d) {
+  cart[id] = Math.max(0, (cart[id] || 0) + d);
+  const span = $('q-' + id); if (span) span.textContent = cart[id];
+}
+async function placeOrder() {
+  const items = Object.entries(cart).filter(([, q]) => q > 0).map(([id, q]) => ({menu_item_id: +id, qty: q}));
+  if (!items.length) { alert('Add something first'); return; }
+  const key = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+  const r = await fetch('/orders', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({table_token: token, items, note: $('note').value, idempotency_key: key})});
+  if (r.ok) { cart = {}; loadMenu(); }
+  else { const e = await r.json(); alert(e.detail || 'Order failed'); }
+}
+async function pollMine() {
+  if (!(await signedIn())) return;
+  const orders = await (await fetch('/orders/mine')).json();
+  const box = $('mine'); if (!box) return;
+  if (!orders.length) { box.textContent = 'None yet.'; return; }
+  box.innerHTML = orders.map(o =>
+    `<div class="item"><span>Order #${o.id}</span><span class="badge">${o.status}</span></div>`).join('');
+}
+
+// Boot
+(async () => {
+  if (!token) { $('app').innerHTML = '<div class="card">No table code.</div>'; return; }
+  if (!(await loadTable())) return;
+  if (await signedIn()) loadMenu(); else showAuth();
+  setInterval(pollMine, 4000);
+})();
+</script>
+</body>
+</html>

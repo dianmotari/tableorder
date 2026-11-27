@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TableOrder — Waiter</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin:0; background:#f4f6f8; color:#222; }
+  header { background:#1d4ed8; color:#fff; padding:12px 16px; display:flex; align-items:center; gap:12px; }
+  header h1 { margin:0; font-size:18px; flex:1; }
+  main { padding:12px; max-width:520px; margin:0 auto; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }
+  .muted { color:#6b7280; font-size:13px; }
+  button { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#fff; cursor:pointer; }
+  button.primary { background:#1d4ed8; color:#fff; border-color:#1d4ed8; }
+  input { padding:8px; border-radius:8px; border:1px solid #d1d5db; width:100%; box-sizing:border-box; margin-top:6px; }
+  .item { display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #eee; }
+  .served { opacity:0.5; text-decoration:line-through; }
+  .badge { padding:2px 8px; border-radius:999px; font-size:12px; background:#e5e7eb; }
+  .banner { background:#fef3c7; border:1px solid #f59e0b; padding:10px; border-radius:8px; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<header><h1>TableOrder — Waiter</h1>
+  <button onclick="showChange(false)" id="chgbtn" style="display:none">Change password</button>
+  <button onclick="logout()">Log out</button>
+</header>
+<main id="app"></main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+function el(html){ const d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; }
+let lastPassword = '';
+
+async function me(){ const r=await fetch('/waiter/me'); return r.ok ? r.json() : null; }
+
+function showLogin(){
+  $('chgbtn').style.display='none';
+  $('app').innerHTML = `
+    <div class="card">
+      <h2>Waiter login</h2>
+      <input id="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <button class="primary" style="margin-top:10px" onclick="doLogin()">Log in</button>
+      <div id="err" class="muted" style="color:#ef4444"></div>
+    </div>`;
+}
+async function doLogin(){
+  lastPassword = $('password').value;
+  const email=$('email').value.trim();
+  const r=await fetch('/waiter/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email,password:lastPassword})});
+  if(r.ok) location.reload(); else $('err').textContent='Wrong email or password';
+}
+async function logout(){ await fetch('/waiter/logout',{method:'POST'}); location.reload(); }
+
+// Mandatory (forced) or voluntary password change.
+function showChange(forced){
+  $('chgbtn').style.display = forced ? 'none' : 'inline-block';
+  $('app').innerHTML = `
+    ${forced ? '<div class="banner">You must change your temporary password before continuing.</div>' : ''}
+    <div class="card">
+      <h2>${forced ? 'Change Your Password' : 'Change password'}</h2>
+      <input id="cur" type="password" placeholder="Current password" value="${forced ? lastPassword : ''}">
+      <input id="new" type="password" placeholder="New password (min 6 chars)">
+      <input id="new2" type="password" placeholder="Confirm new password">
+      <button class="primary" style="margin-top:10px" onclick="submitChange(${forced})">Update password</button>
+      <div id="cerr" style="color:#ef4444"></div>
+    </div>`;
+}
+async function submitChange(forced){
+  const cur=$('cur').value, nw=$('new').value, nw2=$('new2').value;
+  if(nw!==nw2){ $('cerr').textContent='Passwords do not match'; return; }
+  const r=await fetch('/waiter/change-password',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({current_password:cur,new_password:nw})});
+  if(r.ok){ lastPassword=nw; $('chgbtn').style.display='inline-block'; refresh(); }
+  else { const e=await r.json(); $('cerr').textContent=e.detail||'Failed'; }
+}
+
+async function refresh(){
+  const info = await me();
+  if(!info){ showLogin(); return false; }
+  // Block everything until the temp password is changed.
+  if(info.must_change_password){ showChange(true); return true; }
+  $('chgbtn').style.display='inline-block';
+
+  let d;
+  try{ d = await (await fetch('/waiter/dashboard')).json(); }
+  catch(e){ return true; }
+  const app=$('app'); app.innerHTML='';
+  app.appendChild(el(`<div class="card"><h2>${info.name} — <span class="badge">${d.status}</span></h2></div>`));
+  if(!d.table){ app.appendChild(el('<div class="card muted">No table assigned yet.</div>')); return true; }
+  app.appendChild(el(`<div class="card"><h2>${d.table.name}</h2></div>`));
+  for(const g of d.guests){
+    const card = el(`<div class="card"><h3>${g.guest}</h3></div>`);
+    for(const o of g.orders){
+      for(const it of o.items){
+        const row = el(`<div class="item ${it.status==='served'?'served':''}">
+          <span>${it.qty}× ${it.name}</span>
+          ${it.status==='served' ? '<span class="badge">served</span>' :
+            `<button onclick="serve(${it.id})">Served</button>`}
+        </div>`);
+        card.appendChild(row);
+      }
+    }
+    app.appendChild(card);
+  }
+  app.appendChild(el('<div class="card"><button class="primary" onclick="finish()">Finish table / I\'m available</button></div>'));
+  return true;
+}
+async function serve(id){ const r=await fetch(`/waiter/items/${id}/served`,{method:'POST'}); if(!r.ok){alert((await r.json()).detail);} refresh(); }
+async function finish(){ const r=await fetch('/waiter/finish',{method:'POST'}); if(r.ok) refresh(); else { const e=await r.json(); alert(e.detail||'Failed'); } }
+
+refresh();
+setInterval(async()=>{ if(await me()) refresh(); }, 4000);
+</script>
+</body>
+</html>

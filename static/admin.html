@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TableOrder — Admin</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin:0; background:#f4f6f8; color:#222; }
+  header { background:#1f2937; color:#fff; padding:10px 16px; display:flex; gap:12px; align-items:center; }
+  header h1 { font-size:18px; margin:0; flex:1; }
+  nav { display:flex; gap:6px; background:#111827; padding:6px 12px; flex-wrap:wrap; }
+  nav button { background:transparent; color:#d1d5db; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; font-size:14px; }
+  nav button.active { background:#2563eb; color:#fff; }
+  main { padding:16px; }
+  .grid { display:grid; grid-template-columns: 2fr 1fr; gap:16px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }
+  .card h2 { margin:0 0 8px; font-size:16px; }
+  .card h3 { margin:8px 0 4px; font-size:14px; }
+  .waiting { border-left:6px solid #ef4444; }
+  .flash { animation: flash 1s 3; }
+  @keyframes flash { from { background:#fee2e2; } to { background:#fff; } }
+  .muted { color:#6b7280; font-size:13px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px; }
+  button { padding:6px 10px; border-radius:8px; border:1px solid #d1d5db; background:#fff; cursor:pointer; }
+  button.primary { background:#2563eb; color:#fff; border-color:#2563eb; }
+  button.danger { background:#ef4444; color:#fff; border-color:#ef4444; }
+  input, select { padding:6px; border-radius:8px; border:1px solid #d1d5db; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:6px; border-bottom:1px solid #eee; font-size:14px; vertical-align:middle; }
+  .badge { padding:2px 8px; border-radius:999px; font-size:12px; }
+  .free { background:#dcfce7; } .busy { background:#fef3c7; } .off_duty { background:#e5e7eb; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TableOrder — Admin</h1>
+  <span id="who" class="muted"></span>
+  <button onclick="logout()">Log out</button>
+</header>
+<nav>
+  <button data-tab="queue" class="active" onclick="tab('queue')">Queue</button>
+  <button data-tab="waiters" onclick="tab('waiters')">Waiters</button>
+  <button data-tab="tables" onclick="tab('tables')">Tables & QR</button>
+  <button data-tab="menu" onclick="tab('menu')">Menu</button>
+</nav>
+<main>
+  <div id="view"></div>
+</main>
+
+<script>
+// ---------- helpers ----------
+const $ = (id) => document.getElementById(id);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => (
+  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function el(html){ const d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; }
+async function api(path, method='GET', body){
+  const opt = {method, headers:{}};
+  if(body){ opt.headers['Content-Type']='application/json'; opt.body=JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  if(!r.ok){ let msg='Request failed'; try{ msg=(await r.json()).detail||msg; }catch(e){} throw new Error(msg); }
+  return r.status===204? null : r.json();
+}
+let currentTab = 'queue';
+function tab(name){
+  currentTab = name;
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+  render();
+}
+
+// ---------- login ----------
+async function whoami(){ try{ const u=await api('/admin/me'); $('who').textContent=u.email; return true; }catch(e){ showLogin(); return false; } }
+function showLogin(){
+  document.body.innerHTML = `
+    <header><h1>TableOrder — Admin Login</h1></header>
+    <main style="max-width:360px;margin:40px auto;">
+      <div class="card">
+        <input id="email" placeholder="email" style="width:100%">
+        <input id="password" type="password" placeholder="password" style="width:100%;margin-top:8px">
+        <button class="primary" style="margin-top:10px" onclick="doLogin()">Log in</button>
+        <div id="err" style="color:#ef4444"></div>
+      </div>
+    </main>`;
+}
+async function doLogin(){
+  try{ await api('/admin/login','POST',{email:$('email').value.trim(),password:$('password').value}); location.reload(); }
+  catch(e){ $('err').textContent=e.message; }
+}
+async function logout(){ await fetch('/admin/logout',{method:'POST'}); location.reload(); }
+
+// ---------- queue tab ----------
+let knownWaiting = new Set();
+let audioCtx=null;
+function beep(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.connect(g); g.connect(audioCtx.destination);
+  o.frequency.value=880; g.gain.value=0.1; o.start(); o.stop(audioCtx.currentTime+0.15);}catch(e){} }
+
+async function viewQueue(){
+  const b = await api('/admin/board');
+  const current = new Set(b.waiting.map(w=>w.table_id));
+  let hasNew=false; for(const id of current) if(!knownWaiting.has(id)) hasNew=true;
+  knownWaiting=current; if(hasNew) beep();
+
+  const v=$('view'); v.innerHTML='';
+  v.appendChild(el('<div class="grid"><div></div><div></div></div>'));
+  const left=v.firstChild, right=v.lastChild;
+
+  const qc=el('<div class="card"><h2>Waiting queue (oldest first)</h2><div id="q"></div></div>');
+  left.appendChild(qc);
+  const q=qc.querySelector('#q');
+  if(!b.waiting.length) q.innerHTML='<p class="muted">No tables waiting.</p>';
+  for(const w of b.waiting){
+    const opts=b.free_waiters.map(fw=>`<option value="${fw.id}">${esc(fw.name)}</option>`).join('')||'<option>(no free waiter)</option>';
+    const items=w.items.map(i=>`${i.qty}× ${esc(i.name)}`).join(', ');
+    const card=el(`<div class="card waiting ${hasNew?'flash':''}">
+      <h2>${esc(w.table_name)} <span class="muted">waiting ${w.waiting_seconds}s</span></h2>
+      <div class="muted">${items}</div>
+      <div class="row">
+        <select id="sel-${w.table_id}">${opts}</select>
+        <input id="reason-${w.table_id}" placeholder="reason (if out of order)" style="flex:1">
+        <button class="primary" onclick="assign(${w.table_id})">Assign</button>
+      </div></div>`);
+    q.appendChild(card);
+  }
+
+  const wc=el('<div class="card"><h2>Waiters</h2></div>');
+  wc.appendChild(el('<table><tr><th>Name</th><th>Status</th></tr>'+
+    b.waiters.map(x=>`<tr><td>${esc(x.name)}</td><td><span class="badge ${x.status}">${x.status}</span></td></tr>`).join('')+'</table>'));
+  right.appendChild(wc);
+  const tc=el('<div class="card"><h2>Tables</h2></div>');
+  tc.appendChild(el('<table><tr><th>Table</th><th>Status</th></tr>'+
+    b.tables.map(t=>`<tr><td>${esc(t.name)}</td><td>${esc(t.status)}</td></tr>`).join('')+'</table>'));
+  right.appendChild(tc);
+}
+async function assign(tableId){
+  const waiterId=parseInt($('sel-'+tableId).value);
+  const reason=$('reason-'+tableId).value.trim();
+  if(!waiterId){ alert('No free waiter'); return; }
+  try{ await api('/admin/assign','POST',{table_id:tableId,waiter_id:waiterId,reason:reason||null}); viewQueue(); }
+  catch(e){ alert(e.message); }
+}
+
+// ---------- waiters tab ----------
+async function viewWaiters(){
+  const list=await api('/admin/waiters');
+  const v=$('view'); v.innerHTML='';
+  v.appendChild(el(`<div class="card"><h2>Add waiter</h2>
+    <div class="row">
+      <input id="w-name" placeholder="Name"><input id="w-email" placeholder="Email">
+      <button class="primary" onclick="addWaiter()">Add</button>
+    </div>
+    <div class="muted" style="margin-top:6px">A temporary password is generated and shown once — copy it for the waiter.</div>
+    <div id="w-err" style="color:#ef4444"></div></div>`));
+  const card=el('<div class="card"><h2>Waiters</h2></div>');
+  card.appendChild(el('<table><tr><th>Name</th><th>Email</th><th>Status</th><th>Actions</th></tr>'+
+    list.map(w=>`<tr>
+      <td>${esc(w.name)}</td><td>${esc(w.email)}</td>
+      <td><span class="badge ${w.status}">${w.status}</span></td>
+      <td>
+        <button onclick="editWaiterPrompt(${w.id},'${esc(w.name)}','${esc(w.email)}','${w.status}')">Edit</button>
+        <button class="danger" onclick="delWaiter(${w.id})">Delete</button>
+      </td></tr>`).join('')+'</table>'));
+  v.appendChild(card);
+}
+async function addWaiter(){
+  try{
+    const res = await api('/admin/waiters','POST',{name:$('w-name').value.trim(),email:$('w-email').value.trim()});
+    // Show the one-time temporary password prominently.
+    alert('Waiter created.\nTemporary password (shown once): ' + res.temp_password +
+          '\n\nThe waiter must change it on first login.');
+    viewWaiters();
+  }
+  catch(e){ $('w-err').textContent=e.message; }
+}
+async function editWaiterPrompt(id,name,email,status){
+  const n=prompt('Name',name); if(n===null) return;
+  const em=prompt('Email',email); if(em===null) return;
+  const pw=prompt('New password (leave blank to keep)','')||null;
+  const st=prompt('Status (free|busy|on_break|off_duty)',status);
+  try{ await api('/admin/waiters/'+id,'PATCH',{name:n,email:em,password:pw,status:st||null}); viewWaiters(); }
+  catch(e){ alert(e.message); }
+}
+async function delWaiter(id){ if(!confirm('Delete this waiter?')) return;
+  try{ await api('/admin/waiters/'+id,'DELETE'); viewWaiters(); }catch(e){ alert(e.message); } }
+
+// ---------- tables tab ----------
+async function viewTables(){
+  const list=await api('/admin/tables');
+  const v=$('view'); v.innerHTML='';
+  v.appendChild(el(`<div class="card"><h2>Add table</h2>
+    <div class="row">
+      <input id="t-name" placeholder="Name (e.g. Table 7)">
+      <input id="t-seats" type="number" placeholder="Seats">
+      <input id="t-area" placeholder="Area (e.g. Garden)">
+      <button class="primary" onclick="addTable()">Add</button>
+    </div><div id="t-err" style="color:#ef4444"></div></div>`));
+  const card=el('<div class="card"><h2>Tables</h2></div>');
+  card.appendChild(el('<table><tr><th>Name</th><th>Seats</th><th>Area</th><th>Status</th><th>Actions</th></tr>'+
+    list.map(t=>`<tr>
+      <td>${esc(t.name)}</td><td>${t.seats??''}</td><td>${esc(t.area)}</td><td>${esc(t.status)}</td>
+      <td>
+        <button onclick="editTablePrompt(${t.id},'${esc(t.name)}',${t.seats??'null'},'${esc(t.area)}','${t.status}')">Edit</button>
+        <button onclick="regenTable(${t.id})">Regenerate QR</button>
+        <button onclick="printOne(${t.id})">Print one</button>
+        <button class="danger" onclick="delTable(${t.id})">Delete</button>
+      </td></tr>`).join('')+'</table>'));
+  v.appendChild(card);
+  const top=el('<div class="card"><button onclick="printAll()">Print All QR</button></div>');
+  v.insertBefore(top, card);
+}
+async function addTable(){
+  const seats=$('t-seats').value.trim();
+  try{ await api('/admin/tables','POST',{name:$('t-name').value.trim(),seats:seats?parseInt(seats):null,area:$('t-area').value.trim()||null}); viewTables(); }
+  catch(e){ $('t-err').textContent=e.message; }
+}
+async function editTablePrompt(id,name,seats,area,status){
+  const n=prompt('Name',name); if(n===null) return;
+  const s=prompt('Seats',seats??''); const a=prompt('Area',area); const st=prompt('Status (free|occupied|waiting_for_waiter|being_served|needs_bill)',status);
+  try{ await api('/admin/tables/'+id,'PATCH',{name:n,seats:s?parseInt(s):null,area:a||null,status:st||null}); viewTables(); }
+  catch(e){ alert(e.message); }
+}
+async function regenTable(id){ if(!confirm('Old QR will stop working. Regenerate?')) return;
+  try{ await api('/admin/tables/'+id+'/regenerate','POST'); viewTables(); }catch(e){ alert(e.message); } }
+async function delTable(id){ if(!confirm('Delete this table?')) return;
+  try{ await api('/admin/tables/'+id,'DELETE'); viewTables(); }catch(e){ alert(e.message); } }
+function printOne(id){ window.open('/admin/tables/'+id+'/print','_blank'); }
+function printAll(){ window.open('/admin/tables/print/all','_blank'); }
+
+// ---------- menu tab ----------
+async function viewMenu(){
+  const [cats, items] = await Promise.all([api('/admin/categories'), api('/admin/menu')]);
+  const v=$('view'); v.innerHTML='';
+
+  // Categories
+  const cc=el(`<div class="card"><h2>Categories</h2>
+    <div class="row">
+      <input id="c-name" placeholder="Category name"><input id="c-sort" type="number" placeholder="Sort">
+      <button class="primary" onclick="addCat()">Add</button>
+    </div><div id="c-err" style="color:#ef4444"></div></div>`);
+  cc.appendChild(el('<table><tr><th>Name</th><th>Sort</th><th>Actions</th></tr>'+
+    cats.map(c=>`<tr><td>${esc(c.name)}</td><td>${c.sort_order}</td>
+      <td><button onclick="editCatPrompt(${c.id},'${esc(c.name)}',${c.sort_order})">Edit</button>
+      <button class="danger" onclick="delCat(${c.id})">Delete</button></td></tr>`).join('')+'</table>'));
+  v.appendChild(cc);
+
+  // Items
+  const ic=el(`<div class="card"><h2>Menu items</h2>
+    <div class="row">
+      <input id="i-name" placeholder="Name">
+      <select id="i-cat"><option value="">(no category)</option>${cats.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      <input id="i-price" type="number" placeholder="Price KES">
+    </div>
+    <div class="row">
+      <input id="i-desc" placeholder="Description" style="flex:1">
+      <input id="i-photo" placeholder="Photo URL (optional)">
+    </div>
+    <div class="row">
+      <input type="file" id="i-file" accept="image/*">
+      <button onclick="uploadPhoto()">Upload photo</button>
+      <span id="i-photo-status" class="muted"></span>
+      <button class="primary" onclick="addItem()">Add item</button>
+    </div>
+    <div id="i-err" style="color:#ef4444"></div></div>`);
+  ic.appendChild(el('<table><tr><th>Name</th><th>Category</th><th>Price</th><th>Active</th><th>Actions</th></tr>'+
+    items.map(it=>{
+      const cat=cats.find(c=>c.id===it.category_id);
+      return `<tr>
+        <td>${esc(it.name)}</td><td>${cat?esc(cat.name):''}</td><td>${it.price_kes}</td>
+        <td>${it.active?'yes':'no'}</td>
+        <td><button onclick="editItemPrompt(${it.id})">Edit</button>
+        <button class="danger" onclick="delItem(${it.id})">Delete</button></td></tr>`;
+    }).join('')+'</table>'));
+  v.appendChild(ic);
+  window._cats = cats; window._items = items;
+}
+async function addCat(){
+  const sort=$('c-sort').value.trim();
+  try{ await api('/admin/categories','POST',{name:$('c-name').value.trim(),sort_order:sort?parseInt(sort):0}); viewMenu(); }
+  catch(e){ $('c-err').textContent=e.message; }
+}
+async function editCatPrompt(id,name,sort){
+  const n=prompt('Name',name); if(n===null) return; const s=prompt('Sort',sort);
+  try{ await api('/admin/categories/'+id,'PATCH',{name:n,sort_order:s?parseInt(s):0}); viewMenu(); }catch(e){ alert(e.message); }
+}
+async function delCat(id){ if(!confirm('Delete category?')) return;
+  try{ await api('/admin/categories/'+id,'DELETE'); viewMenu(); }catch(e){ alert(e.message); } }
+
+async function uploadPhoto(){
+  const f=$('i-file').files[0]; if(!f){ alert('Choose a file first'); return; }
+  const fd=new FormData(); fd.append('file', f);
+  try{
+    const r=await fetch('/admin/menu/upload',{method:'POST',body:fd});
+    if(!r.ok){ throw new Error((await r.json()).detail||'Upload failed'); }
+    const j=await r.json(); $('i-photo').value=j.photo_url; $('i-photo-status').textContent='Uploaded: '+j.photo_url;
+  }catch(e){ $('i-photo-status').textContent=e.message; }
+}
+async function addItem(){
+  const cat=$('i-cat').value; const price=$('i-price').value.trim();
+  const body={ name:$('i-name').value.trim(), category_id:cat?parseInt(cat):null,
+    price_kes:price?parseInt(price):0, description:$('i-desc').value.trim()||null,
+    photo_url:$('i-photo').value.trim()||null, active:true };
+  try{ await api('/admin/menu','POST',body); viewMenu(); }
+  catch(e){ $('i-err').textContent=e.message; }
+}
+async function editItemPrompt(id){
+  const it=window._items.find(x=>x.id===id); if(!it) return;
+  const n=prompt('Name',it.name); if(n===null) return;
+  const p=prompt('Price KES',it.price_kes); const d=prompt('Description',it.description||'');
+  const photo=prompt('Photo URL',it.photo_url||'');
+  const body={ name:n, category_id:it.category_id, price_kes:p?parseInt(p):0,
+    description:d||null, photo_url:photo||null, active:it.active };
+  try{ await api('/admin/menu/'+id,'PATCH',body); viewMenu(); }catch(e){ alert(e.message); }
+}
+async function delItem(id){ if(!confirm('Delete (hide) this item?')) return;
+  try{ await api('/admin/menu/'+id,'DELETE'); viewMenu(); }catch(e){ alert(e.message); } }
+
+// ---------- boot + polling ----------
+async function render(){
+  try{
+    if(currentTab==='queue') await viewQueue();
+    else if(currentTab==='waiters') await viewWaiters();
+    else if(currentTab==='tables') await viewTables();
+    else if(currentTab==='menu') await viewMenu();
+  }catch(e){ /* ignore transient polling errors */ }
+}
+whoami().then(ok=>{ if(ok){ render(); setInterval(()=>{ if(currentTab==='queue') viewQueue().catch(()=>{}); },4000); } });
+</script>
+</body>
+</html>
