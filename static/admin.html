@@ -147,7 +147,7 @@ async function viewWaiters(){
   v.appendChild(el(`<div class="card"><h2>Add waiter</h2>
     <div class="row">
       <input id="w-name" placeholder="Name"><input id="w-email" placeholder="Email">
-      <button class="primary" onclick="addWaiter()">Add</button>
+      <button id="w-add" class="primary" onclick="addWaiter()">Add</button>
     </div>
     <div class="muted" style="margin-top:6px">A temporary password is generated and shown once — copy it for the waiter.</div>
     <div id="w-err" style="color:#ef4444"></div></div>`));
@@ -163,6 +163,9 @@ async function viewWaiters(){
   v.appendChild(card);
 }
 async function addWaiter(){
+  const btn = $('w-add'); const err = $('w-err');
+  if (btn) btn.disabled = true;
+  if (err) err.textContent = '';
   try{
     const res = await api('/admin/waiters','POST',{name:$('w-name').value.trim(),email:$('w-email').value.trim()});
     // Show the one-time temporary password prominently.
@@ -170,7 +173,7 @@ async function addWaiter(){
           '\n\nThe waiter must change it on first login.');
     viewWaiters();
   }
-  catch(e){ $('w-err').textContent=e.message; }
+  catch(e){ if (err) err.textContent = e.message; if (btn) btn.disabled = false; }
 }
 async function editWaiterPrompt(id,name,email,status){
   const n=prompt('Name',name); if(n===null) return;

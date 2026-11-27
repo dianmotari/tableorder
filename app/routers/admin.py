@@ -86,9 +86,9 @@ def list_waiters(user=Depends(auth.require_roles("admin"))):
 
 @router.post("/waiters", status_code=201)
 def add_waiter(body: WaiterIn, user=Depends(auth.require_roles("admin"))):
-    email = body.email.lower().strip()
-    if db.query_one("SELECT id FROM users WHERE email = ?", (email,)):
-        raise HTTPException(status_code=400, detail="Email already used")
+    email = body.email.strip().lower()
+    if db.query_one("SELECT id FROM users WHERE LOWER(email) = ?", (email,)):
+        raise HTTPException(status_code=409, detail="A user with this email already exists")
     # Auto-generate a temporary password; the admin shows it to the waiter once.
     temp = _temp_password()
     uid = db.execute_returning_id(

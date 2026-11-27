@@ -55,3 +55,36 @@ def test_category_edit():
     assert r.status_code == 200
     row = db.query_one("SELECT name, sort_order FROM categories WHERE id = ?", (cid,))
     assert row["name"] == "Appetizers" and row["sort_order"] == 2
+
+
+def test_duplicate_waiter_email_returns_409():
+    schema.create_all()
+    _admin_login()
+    email = f"dup_{uuid.uuid4().hex[:8]}@e.com"
+    first = client.post("/admin/waiters", json={"name": "A", "email": email})
+    assert first.status_code == 201
+
+    # Same email, different case -> 409 with the exact detail, no new row.
+    second = client.post("/admin/waiters", json={"name": "B", "email": email.upper()})
+    assert second.status_code == 409
+    assert second.json()["detail"] == "A user with this email already exists"
+
+    n = db.query_one(
+        "SELECT COUNT(*) AS n FROM users WHERE LOWER(email) = ?", (email.lower(),))["n"]
+    assert n == 1
+
+
+def test_startup_dedupes_and_indexes_emails():
+    schema.create_all()
+    # Simulate legacy duplicates (same email, different case) directly in the DB.
+    email = f"legacy_{uuid.uuid4().hex[:8]}@e.com"
+    for _ in range(2):
+        db.execute(
+            "INSERT INTO users (hotel_id, role, email, name, active, created_at) "
+            "VALUES (?, 'customer', ?, 'C', 1, ?)",
+            (1, email.upper(), auth.now_iso()),
+        )
+    db.ensure_users_email_unique()
+    n = db.query_one(
+        "SELECT COUNT(*) AS n FROM users WHERE LOWER(email) = ?", (email.lower(),))["n"]
+    assert n == 1

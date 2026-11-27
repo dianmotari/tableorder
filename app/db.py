@@ -73,6 +73,41 @@ def _pg_dsn() -> str:
     return url
 
 
+def ensure_users_email_unique():
+    """Deduplicate users by case-insensitive email, then add a unique index.
+
+    Keeps the lowest id in each duplicate group, reassigns that user's sessions,
+    orders and waiters to the kept row, and deletes the extras. Safe to run on
+    every startup (idempotent) on both SQLite and PostgreSQL.
+    """
+    rows = query_all("SELECT id, email FROM users WHERE email IS NOT NULL ORDER BY id")
+    seen = {}
+    duplicates = []
+    for r in rows:
+        key = (r["email"] or "").strip().lower()
+        if not key:
+            continue
+        if key in seen:
+            duplicates.append((seen[key], r["id"]))
+        else:
+            seen[key] = r["id"]
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        for keep_id, dup_id in duplicates:
+            for table in ("sessions", "orders", "waiters"):
+                cur.execute(_translate(f"UPDATE {table} SET user_id = ? WHERE user_id = ?"),
+                            (keep_id, dup_id))
+            cur.execute(_translate("DELETE FROM users WHERE id = ?"), (dup_id,))
+        # Expression index works on both engines; NULL emails are allowed.
+        cur.execute(
+            _translate(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique "
+                "ON users (LOWER(email))"
+            )
+        )
+
+
 def _ensure_pool():
     """Create the global connection pool once and return it (no acquisition)."""
     global _pg_pool

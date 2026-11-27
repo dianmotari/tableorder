@@ -46,6 +46,8 @@ def _bootstrap_admin():
 async def lifespan(app: FastAPI):
     # Build all Phase 1 tables, ensure the default hotel, then the first admin.
     schema.create_all()
+    # Deduplicate users by email and add the unique index (safe every startup).
+    db.ensure_users_email_unique()
     _bootstrap_admin()
     yield
 
