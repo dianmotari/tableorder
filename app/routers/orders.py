@@ -33,7 +33,7 @@ class OrderIn(BaseModel):
 
 def _valid_table(token: str):
     row = db.query_one(
-        "SELECT id, hotel_id, status FROM tables WHERE token = ? AND active = 1", (token,)
+        "SELECT id, hotel_id, status FROM tables WHERE token = ? AND active = TRUE", (token,)
     )
     if not row:
         raise HTTPException(status_code=404, detail="This table code is not valid")
@@ -89,7 +89,7 @@ def place_order(body: OrderIn, user=Depends(auth.require_roles("customer"))):
         if line.qty <= 0:
             continue
         item = db.query_one(
-            "SELECT name, price_kes FROM menu_items WHERE id = ? AND hotel_id = ? AND active = 1",
+            "SELECT name, price_kes FROM menu_items WHERE id = ? AND hotel_id = ? AND active = TRUE",
             (line.menu_item_id, settings.DEFAULT_HOTEL_ID),
         )
         if not item:

@@ -45,7 +45,7 @@ def _get_table(token: str):
 def list_tables(user=Depends(auth.require_roles("admin"))):
     return db.query_all(
         "SELECT id, name, seats, area, token, status, active "
-        "FROM tables WHERE hotel_id = ? AND active = 1 ORDER BY id",
+        "FROM tables WHERE hotel_id = ? AND active = TRUE ORDER BY id",
         (settings.DEFAULT_HOTEL_ID,),
     )
 
@@ -55,7 +55,7 @@ def add_table(body: TableIn, user=Depends(auth.require_roles("admin"))):
     token = qr.new_token()
     new_id = db.execute_returning_id(
         "INSERT INTO tables (hotel_id, name, seats, area, token, status, active, created_at) "
-        "VALUES (?, ?, ?, ?, ?, 'free', 1, ?)",
+        "VALUES (?, ?, ?, ?, ?, 'free', TRUE, ?)",
         (settings.DEFAULT_HOTEL_ID, body.name, body.seats, body.area, token, auth.now_iso()),
     )
     return {"id": new_id, "token": token, "name": body.name}
@@ -64,7 +64,7 @@ def add_table(body: TableIn, user=Depends(auth.require_roles("admin"))):
 # --- admin: edit / disable / regenerate -----------------------------------
 @router.patch("/admin/tables/{table_id}")
 def edit_table(table_id: int, body: TableOut, user=Depends(auth.require_roles("admin"))):
-    row = db.query_one("SELECT id FROM tables WHERE id = ? AND active = 1", (table_id,))
+    row = db.query_one("SELECT id FROM tables WHERE id = ? AND active = TRUE", (table_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Table not found")
     db.execute(
@@ -78,7 +78,7 @@ def edit_table(table_id: int, body: TableOut, user=Depends(auth.require_roles("a
 @router.delete("/admin/tables/{table_id}")
 def delete_table(table_id: int, user=Depends(auth.require_roles("admin"))):
     # Soft-delete: keep the row and history, just stop the QR working.
-    db.execute("UPDATE tables SET active = 0 WHERE id = ?", (table_id,))
+    db.execute("UPDATE tables SET active = FALSE WHERE id = ?", (table_id,))
     db.execute(
         "INSERT INTO audit_log (hotel_id, actor_id, action, detail, created_at) "
         "VALUES (?, ?, 'delete_table', ?, ?)",
@@ -89,7 +89,7 @@ def delete_table(table_id: int, user=Depends(auth.require_roles("admin"))):
 
 @router.post("/admin/tables/{table_id}/regenerate")
 def regenerate(table_id: int, user=Depends(auth.require_roles("admin"))):
-    row = db.query_one("SELECT id FROM tables WHERE id = ? AND active = 1", (table_id,))
+    row = db.query_one("SELECT id FROM tables WHERE id = ? AND active = TRUE", (table_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Table not found")
     token = qr.new_token()  # old token dies here
@@ -158,7 +158,7 @@ def _base_url(request: Request) -> str:
 
 @router.get("/admin/tables/{table_id}/print", response_class=HTMLResponse)
 def print_one(table_id: int, request: Request, user=Depends(auth.require_roles("admin"))):
-    row = db.query_one("SELECT name, token FROM tables WHERE id = ? AND active = 1", (table_id,))
+    row = db.query_one("SELECT name, token FROM tables WHERE id = ? AND active = TRUE", (table_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Table not found")
     card = _qr_card_html(row["name"], row["token"], _base_url(request))
@@ -168,7 +168,7 @@ def print_one(table_id: int, request: Request, user=Depends(auth.require_roles("
 @router.get("/admin/tables/print/all", response_class=HTMLResponse)
 def print_all(request: Request, user=Depends(auth.require_roles("admin"))):
     rows = db.query_all(
-        "SELECT name, token FROM tables WHERE hotel_id = ? AND active = 1 ORDER BY id",
+        "SELECT name, token FROM tables WHERE hotel_id = ? AND active = TRUE ORDER BY id",
         (settings.DEFAULT_HOTEL_ID,),
     )
     cards = "".join(_qr_card_html(r["name"], r["token"], _base_url(request)) for r in rows)

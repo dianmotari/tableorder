@@ -91,7 +91,7 @@ def add_item(body: ItemIn, user=Depends(auth.require_roles("admin"))):
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             settings.DEFAULT_HOTEL_ID, body.category_id, body.name, body.description,
-            body.price_kes, body.photo_url, 1 if body.active else 0, auth.now_iso(),
+            body.price_kes, body.photo_url, body.active, auth.now_iso(),
         ),
     )
     return {"id": new_id}
@@ -106,7 +106,7 @@ def edit_item(item_id: int, body: ItemIn, user=Depends(auth.require_roles("admin
         "photo_url = ?, active = ? WHERE id = ? AND hotel_id = ?",
         (
             body.category_id, body.name, body.description, body.price_kes,
-            body.photo_url, 1 if body.active else 0, item_id, settings.DEFAULT_HOTEL_ID,
+            body.photo_url, body.active, item_id, settings.DEFAULT_HOTEL_ID,
         ),
     )
     return {"ok": True}
@@ -115,7 +115,7 @@ def edit_item(item_id: int, body: ItemIn, user=Depends(auth.require_roles("admin
 @router.delete("/admin/menu/{item_id}")
 def delete_item(item_id: int, user=Depends(auth.require_roles("admin"))):
     # Hide instead of hard-delete so old order_items keep their snapshot.
-    db.execute("UPDATE menu_items SET active = 0 WHERE id = ? AND hotel_id = ?",
+    db.execute("UPDATE menu_items SET active = FALSE WHERE id = ? AND hotel_id = ?",
                (item_id, settings.DEFAULT_HOTEL_ID))
     return {"ok": True}
 
@@ -144,7 +144,7 @@ def public_menu():
     )
     items = db.query_all(
         "SELECT id, category_id, name, description, price_kes, photo_url "
-        "FROM menu_items WHERE hotel_id = ? AND active = 1 ORDER BY category_id, id",
+        "FROM menu_items WHERE hotel_id = ? AND active = TRUE ORDER BY category_id, id",
         (settings.DEFAULT_HOTEL_ID,),
     )
     return {"categories": categories, "items": items}

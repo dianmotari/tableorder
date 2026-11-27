@@ -79,7 +79,7 @@ def change_password(body: ChangePwIn, user=Depends(auth.require_roles("waiter"))
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
     db.execute(
-        "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+        "UPDATE users SET password_hash = ?, must_change_password = FALSE WHERE id = ?",
         (auth.hash_password(body.new_password), user["id"]),
     )
     return {"ok": True}

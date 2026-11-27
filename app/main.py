@@ -31,7 +31,7 @@ def _bootstrap_admin():
         return
     db.execute(
         "INSERT INTO users (hotel_id, role, email, name, password_hash, active, created_at) "
-        "VALUES (?, 'admin', ?, ?, ?, 1, ?)",
+        "VALUES (?, 'admin', ?, ?, ?, TRUE, ?)",
         (
             settings.DEFAULT_HOTEL_ID,
             settings.ADMIN_EMAIL.lower(),

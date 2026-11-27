@@ -94,7 +94,7 @@ def add_waiter(body: WaiterIn, user=Depends(auth.require_roles("admin"))):
     uid = db.execute_returning_id(
         "INSERT INTO users "
         "(hotel_id, role, email, name, password_hash, active, must_change_password, created_at) "
-        "VALUES (?, 'waiter', ?, ?, ?, 1, 1, ?)",
+        "VALUES (?, 'waiter', ?, ?, ?, TRUE, TRUE, ?)",
         (settings.DEFAULT_HOTEL_ID, email, body.name, auth.hash_password(temp), auth.now_iso()),
     )
     wid = db.execute_returning_id(
@@ -127,7 +127,7 @@ def edit_waiter(waiter_id: int, body: WaiterEdit, user=Depends(auth.require_role
         db.execute("UPDATE users SET email = ? WHERE id = ?", (email, uid))
     if body.password:
         # Admin-set password must be changed by the waiter on next login.
-        db.execute("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?",
+        db.execute("UPDATE users SET password_hash = ?, must_change_password = TRUE WHERE id = ?",
                    (auth.hash_password(body.password), uid))
     if body.status is not None:
         db.execute("UPDATE waiters SET status = ? WHERE id = ?", (body.status, waiter_id))
@@ -137,7 +137,7 @@ def edit_waiter(waiter_id: int, body: WaiterEdit, user=Depends(auth.require_role
 @router.delete("/waiters/{waiter_id}")
 def delete_waiter(waiter_id: int, user=Depends(auth.require_roles("admin"))):
     # Soft-disable: keep history, block login, take them off the floor.
-    db.execute("UPDATE users SET active = 0 WHERE id = (SELECT user_id FROM waiters WHERE id = ?)",
+    db.execute("UPDATE users SET active = FALSE WHERE id = (SELECT user_id FROM waiters WHERE id = ?)",
                (waiter_id,))
     db.execute("UPDATE waiters SET status = 'off_duty' WHERE id = ?", (waiter_id,))
     db.execute(
@@ -170,7 +170,7 @@ def board(user=Depends(auth.require_roles("admin"))):
             (settings.DEFAULT_HOTEL_ID,),
         ),
         "tables": db.query_all(
-            "SELECT id, name, status FROM tables WHERE hotel_id = ? AND active = 1 ORDER BY id",
+            "SELECT id, name, status FROM tables WHERE hotel_id = ? AND active = TRUE ORDER BY id",
             (settings.DEFAULT_HOTEL_ID,),
         ),
     }

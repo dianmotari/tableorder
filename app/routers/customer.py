@@ -55,7 +55,7 @@ def _find_or_create_customer(email: str, name: str | None = None, google_sub: st
         return row["id"]
     new_id = db.execute_returning_id(
         "INSERT INTO users (hotel_id, role, email, google_sub, name, active, created_at) "
-        "VALUES (?, 'customer', ?, ?, ?, 1, ?)",
+        "VALUES (?, 'customer', ?, ?, ?, TRUE, ?)",
         (settings.DEFAULT_HOTEL_ID, email.lower(), google_sub, name or email, auth.now_iso()),
     )
     return new_id
@@ -89,7 +89,7 @@ def request_otp(body: EmailIn):
     code = f"{secrets.randbelow(1000000):06d}"  # 6 digits
     db.execute(
         "INSERT INTO otp_codes (email, code_hash, attempts, consumed, created_at, expires_at) "
-        "VALUES (?, ?, 0, 0, ?, ?)",
+        "VALUES (?, ?, 0, FALSE, ?, ?)",
         (email, _hash_code(code), _iso(_now()), _iso(_now() + timedelta(minutes=OTP_TTL_MIN))),
     )
     emailer.send_otp(email, code)
@@ -107,7 +107,7 @@ def verify_otp(body: VerifyIn, response: Response):
     email = body.email.lower().strip()
     row = db.query_one(
         "SELECT id, code_hash, attempts, expires_at FROM otp_codes "
-        "WHERE email = ? AND consumed = 0 ORDER BY id DESC LIMIT 1",
+        "WHERE email = ? AND consumed = FALSE ORDER BY id DESC LIMIT 1",
         (email,),
     )
     if not row:
@@ -124,7 +124,7 @@ def verify_otp(body: VerifyIn, response: Response):
         raise HTTPException(status_code=400, detail="Wrong code.")
 
     # Correct: consume the code and sign the customer in.
-    db.execute("UPDATE otp_codes SET consumed = 1 WHERE id = ?", (row["id"],))
+    db.execute("UPDATE otp_codes SET consumed = TRUE WHERE id = ?", (row["id"],))
     user_id = _find_or_create_customer(email)
     _set_cookie(response, user_id)
     return {"ok": True}

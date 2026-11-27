@@ -36,7 +36,7 @@ def get_waiting_tables():
     sessions = db.query_all(
         "SELECT s.id AS session_id, s.table_id, t.name AS table_name "
         "FROM table_sessions s JOIN tables t ON t.id = s.table_id "
-        "WHERE s.status = 'open' AND t.active = 1 AND t.hotel_id = ?",
+        "WHERE s.status = 'open' AND t.active = TRUE AND t.hotel_id = ?",
         (settings.DEFAULT_HOTEL_ID,),
     )
     waiting = []
